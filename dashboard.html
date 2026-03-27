@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <title>系统巡检集成控制台</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f7fa;
+            font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', Arial, sans-serif;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            margin: 0;
+            color: #303133;
+            font-size: 24px;
+        }
+
+        .log-ok {
+            color: #67C23A;
+            font-weight: bold;
+        }
+
+        .log-slow {
+            color: #E6A23C;
+            font-weight: bold;
+        }
+
+        .log-error {
+            color: #F56C6C;
+            font-weight: bold;
+        }
+
+        .section-header {
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <div class="header">
+            <h1>系统巡检集中控制台</h1>
+            <div>
+                <el-button type="primary" size="large" @click="triggerInspection"
+                    :loading="triggering">立即执行全覆盖巡检</el-button>
+                <el-button type="danger" size="small" @click="logout" plain>退出登录</el-button>
+            </div>
+        </div>
+
+        <el-tabs v-model="activeTab" type="border-card">
+            <!-- =======================
+             Tab 1: 监控大盘
+        ======================== -->
+            <el-tab-pane label="📊 监控大盘" name="dashboard">
+                <el-card shadow="hover">
+                    <template #header>
+                        <div style="display:flex; justify-content:space-between;">
+                            <span>实时巡检结果 (最近 100 条日志，每 10 秒自动刷新)</span>
+                            <el-button type="text" @click="fetchStatus">手动刷新</el-button>
+                        </div>
+                    </template>
+                    <el-table :data="statusData" style="width: 100%" height="550" v-loading="loadingStatus" border
+                        stripe>
+                        <el-table-column prop="time" label="巡检时间" width="220">
+                            <template #default="scope">{{ new Date(scope.row.time).toLocaleString() }}</template>
+                        </el-table-column>
+                        <el-table-column prop="type" label="网络层级" width="100"></el-table-column>
+                        <el-table-column prop="name" label="目标名称" width="200"></el-table-column>
+                        <el-table-column label="健康状态" width="120">
+                            <template #default="scope">
+                                <span v-if="!scope.row.ok" class="log-error">🔴 异常</span>
+                                <span v-else-if="scope.row.slow" class="log-slow">🟡 慢响应</span>
+                                <span v-else class="log-ok">🟢 正常</span>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="detail" label="诊断详情"></el-table-column>
+                    </el-table>
+                </el-card>
+            </el-tab-pane>
+
+            <!-- =======================
+             Tab 2: 巡检节点配置
+        ======================== -->
+            <el-tab-pane label="⚙️ 巡检节点配置" name="config">
+                <el-alert title="注意：在下方表格中做出所有的新增/修改/删除操作后，必须点击最下方的【保存全部配置】按钮才能写入生效！" type="warning" show-icon
+                    style="margin-bottom: 15px;"></el-alert>
+
+                <el-collapse v-model="activeCollapse">
+                    <!-- 1. URL -->
+                    <el-collapse-item title="🌐 Web 接口及页面 (URL_CHECKS)" name="1">
+                        <div class="section-header"><el-button type="success" size="small" @click="addURL">＋
+                                新增接口监控</el-button></div>
+                        <el-table :data="configForm.URL_CHECKS" border size="small">
+                            <el-table-column label="接口名称"><template #default="scope"><el-input v-model="scope.row.name"
+                                        placeholder="如：HIS主服务"></el-input></template></el-table-column>
+                            <el-table-column label="URL地址"><template #default="scope"><el-input v-model="scope.row.url"
+                                        placeholder="http://..."></el-input></template></el-table-column>
+                            <el-table-column label="请求方法" width="150">
+                                <template #default="scope">
+                                    <el-select v-model="scope.row.method">
+                                        <el-option label="GET" value="GET"></el-option>
+                                        <el-option label="POST" value="POST"></el-option>
+                                    </el-select>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="操作" width="80"><template #default="scope"><el-button type="danger"
+                                        size="small"
+                                        @click="configForm.URL_CHECKS.splice(scope.$index, 1)">删除</el-button></template></el-table-column>
+                        </el-table>
+                    </el-collapse-item>
+
+                    <!-- 2. Oracle -->
+                    <el-collapse-item title="🗄️ Oracle 数据库 (ORACLE_DBS)" name="2">
+                        <div class="section-header"><el-button type="success" size="small"
+                                @click="addDB('ORACLE_DBS')">＋ 新增 Oracle 引擎监控</el-button></div>
+                        <el-table :data="configForm.ORACLE_DBS" border size="small">
+                            <el-table-column label="库别名" width="120"><template #default="scope"><el-input
+                                        v-model="scope.row.name"></el-input></template></el-table-column>
+                            <el-table-column label="主机IP" width="140"><template #default="scope"><el-input
+                                        v-model="scope.row.host"></el-input></template></el-table-column>
+                            <el-table-column label="端口" width="100"><template #default="scope"><el-input
+                                        v-model="scope.row.port"></el-input></template></el-table-column>
+                            <el-table-column label="Service 实例" width="140"><template #default="scope"><el-input
+                                        v-model="scope.row.service"></el-input></template></el-table-column>
+                            <el-table-column label="用户账号" width="120"><template #default="scope"><el-input
+                                        v-model="scope.row.user"></el-input></template></el-table-column>
+                            <el-table-column label="访问密码"><template #default="scope"><el-input show-password
+                                        v-model="scope.row.password"></el-input></template></el-table-column>
+                            <el-table-column label="操作" width="80"><template #default="scope"><el-button type="danger"
+                                        size="small"
+                                        @click="configForm.ORACLE_DBS.splice(scope.$index, 1)">删除</el-button></template></el-table-column>
+                        </el-table>
+                    </el-collapse-item>
+
+                    <!-- 3. MySQL -->
+                    <el-collapse-item title="🐬 MySQL 数据库 (MYSQL_DBS)" name="3">
+                        <div class="section-header"><el-button type="success" size="small" @click="addDB('MYSQL_DBS')">＋
+                                新增 MySQL 引擎监控</el-button></div>
+                        <el-table :data="configForm.MYSQL_DBS" border size="small">
+                            <el-table-column label="库别名" width="120"><template #default="scope"><el-input
+                                        v-model="scope.row.name"></el-input></template></el-table-column>
+                            <el-table-column label="主机IP" width="140"><template #default="scope"><el-input
+                                        v-model="scope.row.host"></el-input></template></el-table-column>
+                            <el-table-column label="端口" width="100"><template #default="scope"><el-input
+                                        v-model="scope.row.port"></el-input></template></el-table-column>
+                            <el-table-column label="Database 库名" width="140"><template #default="scope"><el-input
+                                        v-model="scope.row.database"></el-input></template></el-table-column>
+                            <el-table-column label="用户账号" width="120"><template #default="scope"><el-input
+                                        v-model="scope.row.user"></el-input></template></el-table-column>
+                            <el-table-column label="访问密码"><template #default="scope"><el-input show-password
+                                        v-model="scope.row.password"></el-input></template></el-table-column>
+                            <el-table-column label="操作" width="80"><template #default="scope"><el-button type="danger"
+                                        size="small"
+                                        @click="configForm.MYSQL_DBS.splice(scope.$index, 1)">删除</el-button></template></el-table-column>
+                        </el-table>
+                    </el-collapse-item>
+
+                    <!-- 4. 主机 Ping -->
+                    <el-collapse-item title="🖥️ 服务器主机存活网络 (HOSTS)" name="4">
+                        <div class="section-header" style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <el-button type="success" size="small" @click="addHost">＋ 新增 Ping 测试</el-button>
+                            </div>
+                            <div>
+                                <el-button type="info" size="small" @click="downloadTemplate" plain>下载 CSV 模板</el-button>
+                                <el-upload
+                                    action="/api/import/csv"
+                                    :show-file-list="false"
+                                    :on-success="handleImportSuccess"
+                                    :on-error="handleImportError"
+                                    style="display: inline-block; margin-left: 10px;">
+                                    <el-button type="warning" size="small" plain>批量导入 CSV</el-button>
+                                </el-upload>
+                            </div>
+                        </div>
+                        <el-table :data="configForm.HOSTS" border size="small">
+                            <el-table-column label="设备名称"><template #default="scope"><el-input v-model="scope.row.name"
+                                        placeholder="如：核心交换机"></el-input></template></el-table-column>
+                            <el-table-column label="主机IP或域名"><template #default="scope"><el-input
+                                        v-model="scope.row.host"
+                                        placeholder="192.168.1.1"></el-input></template></el-table-column>
+                            <el-table-column label="操作" width="80"><template #default="scope"><el-button type="danger"
+                                        size="small"
+                                        @click="configForm.HOSTS.splice(scope.$index, 1)">删除</el-button></template></el-table-column>
+                        </el-table>
+                    </el-collapse-item>
+
+                    <!-- 5. TCP 端口 -->
+                    <el-collapse-item title="🔌 特定中间件端口存活 (TCP_PORTS)" name="5">
+                        <div class="section-header"><el-button type="success" size="small" @click="addPort">＋ 新增 TCP
+                                端口探测</el-button></div>
+                        <el-table :data="configForm.TCP_PORTS" border size="small">
+                            <el-table-column label="服务组件名"><template #default="scope"><el-input v-model="scope.row.name"
+                                        placeholder="如：Redis集群"></el-input></template></el-table-column>
+                            <el-table-column label="目标主机IP"><template #default="scope"><el-input
+                                        v-model="scope.row.host"
+                                        placeholder="192.168.1.100"></el-input></template></el-table-column>
+                            <el-table-column label="TCP探测端口"><template #default="scope"><el-input
+                                        v-model="scope.row.port"
+                                        placeholder="6379"></el-input></template></el-table-column>
+                            <el-table-column label="操作" width="80"><template #default="scope"><el-button type="danger"
+                                        size="small"
+                                        @click="configForm.TCP_PORTS.splice(scope.$index, 1)">删除</el-button></template></el-table-column>
+                        </el-table>
+                    </el-collapse-item>
+
+                    <!-- 6. Telnet 端口 -->
+                    <el-collapse-item title="📡 Telnet 方式检测 (TELNET_CHECKS)" name="6">
+                        <div class="section-header"><el-button type="success" size="small" @click="addTelnet">＋ 新增
+                                Telnet 检测</el-button></div>
+                        <el-table :data="configForm.TELNET_CHECKS" border size="small">
+                            <el-table-column label="节点名称"><template #default="scope"><el-input v-model="scope.row.name"
+                                        placeholder="如：核心业务端口"></el-input></template></el-table-column>
+                            <el-table-column label="主机IP"><template #default="scope"><el-input v-model="scope.row.host"
+                                        placeholder="192.168.1.103"></el-input></template></el-table-column>
+                            <el-table-column label="探测端口"><template #default="scope"><el-input v-model="scope.row.port"
+                                        placeholder="8080"></el-input></template></el-table-column>
+                            <el-table-column label="超时(秒)" width="100"><template #default="scope"><el-input-number
+                                        v-model="scope.row.timeout" :min="1" :max="30"
+                                        style="width: 100%"></el-input-number></template></el-table-column>
+                            <el-table-column label="操作" width="80"><template #default="scope"><el-button type="danger"
+                                        size="small"
+                                        @click="configForm.TELNET_CHECKS.splice(scope.$index, 1)">删除</el-button></template></el-table-column>
+                        </el-table>
+                    </el-collapse-item>
+                </el-collapse>
+
+                <div style="margin-top: 30px; text-align: center;">
+                    <el-button type="primary" size="large" style="width: 250px" @click="saveConfig" :loading="saving">💾
+                        保存当前页面的系统级配置</el-button>
+                </div>
+            </el-tab-pane>
+
+            <!-- =======================
+             Tab 3: 系统设置
+        ======================== -->
+            <el-tab-pane label="🚨 企业微信机器人配置" name="settings">
+                <el-card shadow="never" style="max-width: 800px; margin: 0 auto;">
+                    <template #header><strong>告警信道接入设置</strong></template>
+                    <el-form label-width="120px" v-if="configForm.ALERT_CONFIG">
+                        <el-form-item label="Webhook URL">
+                            <el-input v-model="configForm.ALERT_CONFIG.url"
+                                placeholder="http://企业微信机器人接口:8080/wx/sendTextMsg"></el-input>
+                        </el-form-item>
+                        <el-form-item label="Secret Key">
+                            <el-input v-model="configForm.ALERT_CONFIG.key" placeholder="填入机器人对应的验证校验 Key"></el-input>
+                        </el-form-item>
+                        <el-form-item>
+                            <el-button type="primary" @click="saveConfig" :loading="saving">仅保存此选项</el-button>
+                            <el-button type="success" @click="testAlert" :loading="testingAlert" plain>发送测试消息
+                                (实时全量巡检并推送到群)</el-button>
+                        </el-form-item>
+
+                    </el-form>
+                    <div style="color: #909399; font-size: 13px; margin-top: 20px;">
+                        * 部署提示：后台巡检系统已内置 <b>连续防抖 3 次预警制</b> 与 <b>自愈恢复报喜机制</b>。当不填写 Key 与 Webhook URL
+                        时默认静默，将阻止告警信息的推流不触发。
+                    </div>
+                </el-card>
+            </el-tab-pane>
+        </el-tabs>
+    </div>
+
+    <!-- =========================
+     脚本引入块
+========================== -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/element-plus"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+
+    <script>
+        const { createApp, ref, reactive, onMounted } = Vue;
+
+        const app = createApp({
+            setup() {
+                const activeTab = ref('dashboard');
+                const activeCollapse = ref(['1']);
+
+                const statusData = ref([]);
+                const loadingStatus = ref(false);
+                const triggering = ref(false);
+                const saving = ref(false);
+                const testingAlert = ref(false);
+
+
+                // 我们要求所有的字段都有默认值防止 Vue 报错深拷贝
+                const configForm = reactive({
+                    URL_CHECKS: [],
+                    ORACLE_DBS: [],
+                    MYSQL_DBS: [],
+                    HOSTS: [],
+                    TCP_PORTS: [],
+                    TELNET_CHECKS: [],
+                    ALERT_CONFIG: { url: '', key: '' }
+                });
+
+                // 拉取日志
+                const fetchStatus = () => {
+                    loadingStatus.value = true;
+                    axios.get('/status').then(res => {
+                        // reverse 是为了让最晚的记录也就是最新发生的记录留在第一个
+                        statusData.value = res.data.data.reverse();
+                    }).finally(() => { loadingStatus.value = false; });
+                };
+
+                // 拉取配置信息到表单
+                const fetchConfig = () => {
+                    axios.get('/api/config').then(res => {
+                        Object.assign(configForm, res.data);
+                        // 防御空保护
+                        if (!configForm.ALERT_CONFIG) configForm.ALERT_CONFIG = { url: '', key: '' };
+                        if (!configForm.URL_CHECKS) configForm.URL_CHECKS = [];
+                        if (!configForm.ORACLE_DBS) configForm.ORACLE_DBS = [];
+                        if (!configForm.MYSQL_DBS) configForm.MYSQL_DBS = [];
+                        if (!configForm.HOSTS) configForm.HOSTS = [];
+                        if (!configForm.TCP_PORTS) configForm.TCP_PORTS = [];
+                        if (!configForm.TELNET_CHECKS) configForm.TELNET_CHECKS = [];
+                    });
+                };
+
+                // 保存配置到后端 JSON
+                const saveConfig = () => {
+                    saving.value = true;
+                    axios.post('/api/config', configForm).then(res => {
+                        if (res.data.code === 200) {
+                            ElementPlus.ElMessage.success('配置已成功写入并生效！');
+                        } else {
+                            ElementPlus.ElMessage.error(res.data.error || '保存失败，请检查请求。');
+                        }
+                    }).catch(() => ElementPlus.ElMessage.error('服务器网络错误'))
+                        .finally(() => saving.value = false);
+                };
+
+                // 手动立即触发全量巡检
+                const triggerInspection = () => {
+                    triggering.value = true;
+                    axios.post('/api/inspect/trigger').then(res => {
+                        if (res.data.code === 200) {
+                            ElementPlus.ElMessage.success(res.data.msg);
+                            setTimeout(fetchStatus, 3000); // 并不能立刻出结果，延迟 3 秒重新拉数据
+                        } else {
+                            ElementPlus.ElMessage.warning(res.data.msg);
+                        }
+                    }).finally(() => triggering.value = false);
+                };
+
+                // 手动触发一次巡检测试并发送企微消息（同步等待结果）
+                const testAlert = () => {
+                    testingAlert.value = true;
+                    axios.post('/api/alert/test').then(res => {
+                        if (res.data.code === 200) {
+                            ElementPlus.ElMessage.success(res.data.msg);
+                        } else {
+                            ElementPlus.ElMessage.error(res.data.msg || '发送失败');
+                        }
+                    }).catch(err => {
+                        const msg = err.response?.data?.msg || '请求异常';
+                        ElementPlus.ElMessage.error(msg);
+                    }).finally(() => testingAlert.value = false);
+                };
+
+                // 登出
+                const logout = () => {
+                    window.location.href = '/api/logout';
+                };
+
+
+                // 导入导出
+                const downloadTemplate = () => {
+                    window.location.href = '/api/import/template';
+                };
+
+                const handleImportSuccess = (res) => {
+                    if (res.code === 200) {
+                        if (res.data && res.data.length > 0) {
+                            configForm.HOSTS.push(...res.data);
+                            ElementPlus.ElMessage.success(res.msg);
+                        } else {
+                            ElementPlus.ElMessage.warning('文件读取成功，但未发现有效数据条目。');
+                        }
+                    } else {
+                        ElementPlus.ElMessage.error(res.msg || '导入失败');
+                    }
+                };
+
+                const handleImportError = (err) => {
+                    ElementPlus.ElMessage.error('上传解析失败，请检查文件格式是否正确。');
+                };
+
+                // 表格增行函数
+                const addURL = () => configForm.URL_CHECKS.push({ name: '', url: '', method: 'GET' });
+                const addHost = () => configForm.HOSTS.push({ name: '', host: '' });
+                const addPort = () => configForm.TCP_PORTS.push({ name: '', host: '', port: '' });
+                const addTelnet = () => configForm.TELNET_CHECKS.push({ name: '', host: '', port: '', timeout: 3 });
+                const addDB = (type) => {
+                    let base = { name: '', host: '', port: '', user: '', password: '' };
+                    if (type === 'ORACLE_DBS') base.service = '';
+                    if (type === 'MYSQL_DBS') base.database = '';
+                    configForm[type].push(base);
+                };
+
+                onMounted(() => {
+                    fetchStatus();
+                    fetchConfig();
+
+                    // 定时刷新监控大盘
+                    setInterval(() => {
+                        if (activeTab.value === 'dashboard') {
+                            fetchStatus();
+                        }
+                    }, 10000);
+                });
+
+                return {
+                    activeTab, activeCollapse, statusData, loadingStatus, triggering, saving, testingAlert,
+                    configForm, fetchStatus, saveConfig, triggerInspection, testAlert, logout, addURL, addDB, addHost, addPort, addTelnet,
+                    downloadTemplate, handleImportSuccess, handleImportError
+                }
+
+            }
+        });
+
+        app.use(ElementPlus);
+        app.mount('#app');
+
+        // 全局拦截 401 未登录，自动跳转登录页
+        axios.interceptors.response.use(
+            response => response,
+            error => {
+                if (error.response && error.response.status === 401) {
+                    window.location.href = '/login';
+                }
+                return Promise.reject(error);
+            }
+        );
+    </script>
+</body>
+
+</html>
