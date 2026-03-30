@@ -8,5 +8,4 @@ logs/
 # ��������
 config.py
 
-# 敏感配置目录
-data/
+
